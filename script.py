@@ -41,7 +41,7 @@ def _write_submission(rows: list[dict], path: str) -> None:
 
 
 def _empty_record(row, *, with_explanation: bool) -> dict:
-    n = count_items(str(row.get("query", "") or "")) or 1
+    n = count_items(str(row.get("query", "") or ""), str(row.get("context", "") or "")) or 1
     record = {"id": row["id"], "pred": json.dumps([""] * n, ensure_ascii=False)}
     if with_explanation:
         record["explanation"] = ""

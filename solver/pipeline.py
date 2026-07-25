@@ -66,7 +66,10 @@ def solve_row(
     if strategy not in STRATEGIES:
         raise ValueError(f"unknown strategy {strategy!r}; expected one of {STRATEGIES}")
 
-    n = count_items(str(row.get("query", "") or "")) or 1
+    n = count_items(
+        str(row.get("query", "") or ""),
+        str(row.get("context", "") or ""),
+    ) or 1
     meta: dict[str, Any] = {
         "n": n,
         "strategy": strategy,

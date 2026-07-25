@@ -19,8 +19,45 @@ def test_count_items_numbered_dot():
     assert count_items(query) == 3
 
 
-def test_count_items_paren():
+def test_count_items_paren_lines():
     assert count_items("Fill in:\n1) aaa\n2) bbb") == 2
+
+
+def test_count_items_range_header():
+    assert count_items("Fill in the blanks (1–14).") == 14
+    assert count_items("Write the equalities (1-9) in numerals.") == 9
+
+
+def test_count_items_inline_paren_blanks():
+    query = (
+        "Fill the blanks (1-10):\n\n"
+        "her | (1)\n"
+        "foo | (2)\n"
+        "bar | (3)\n"
+        "(4) | it chose\n"
+        "(5) | I saw\n"
+        "(6) | I plant\n"
+        "(7) | trapped\n"
+        "(8) | I leap\n"
+        "(9) | sewn\n"
+        "(10) | bathed\n"
+    )
+    assert count_items(query) == 10
+
+
+def test_count_items_double_blanks_per_line():
+    query = (
+        "Fill in the blanks (1–18).\n"
+        "*a | (4) | (5) to tie\n"
+        "*b | (6) | (7) fathom\n"
+    )
+    assert count_items(query) == 18
+
+
+def test_count_items_match_letters_from_context():
+    query = "Determine the correct correspondences."
+    context = "1. aaa\n2. bbb\n3. ccc\n\nA. one\nB. two\nC. three\n"
+    assert count_items(query, context) == 3
 
 
 def test_count_items_fallback_blank():
