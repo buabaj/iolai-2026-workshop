@@ -5,20 +5,26 @@ import unicodedata
 from typing import Any, Mapping
 
 _OUTER_QUOTE = re.compile(r"^[`'\"“”‘’]+|[`'\"“”‘’]+$")
+_LETTER = re.compile(r"^[A-Z]$")
+_DIGITS = re.compile(r"^\d+$")
 
 
 def normalize_answer(answer: str, task_type: str = "") -> str:
+    """Standardize valid answers only. Never invent a plausible answer from prose."""
     s = unicodedata.normalize("NFC", answer or "").strip()
     s = _OUTER_QUOTE.sub("", s).strip()
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\n+", " ", s).strip()
+    if not s:
+        return ""
     task = (task_type or "").strip().lower()
 
     if task == "match_letters":
-        match = re.search(r"[A-Za-z]", s)
-        return match.group(0).upper() if match else s.upper()[:1]
+        letter = s.upper()
+        return letter if _LETTER.fullmatch(letter) else ""
     if task == "text_to_num":
-        return re.sub(r"[^\d]", "", s)
+        compact = re.sub(r"[\s,]", "", s)
+        return compact if _DIGITS.fullmatch(compact) else ""
     return s
 
 

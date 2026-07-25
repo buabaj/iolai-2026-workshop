@@ -108,11 +108,13 @@ def test_verify_empty():
 
 
 def test_normalize_match_letters():
-    assert normalize_answer(" (b) ", "match_letters") == "B"
+    assert normalize_answer("B", "match_letters") == "B"
+    assert normalize_answer(" (b) ", "match_letters") == ""
 
 
 def test_normalize_text_to_num():
     assert normalize_answer("1,111", "text_to_num") == "1111"
+    assert normalize_answer("1 + 3 = 4", "text_to_num") == ""
 
 
 def test_normalize_quotes():

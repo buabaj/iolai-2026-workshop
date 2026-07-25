@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 _FINAL_MARKER = re.compile(r"(?im)^\s*final answers?\s*:?\s*$")
+_SINGLE_FINAL = re.compile(r"(?im)^\s*(?:final|answer)\s*:\s*(.+)$")
 _LINE_PREFIX = re.compile(r"^\s*(?:\d+[.)]|[-*•])\s*")
 _FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
@@ -87,6 +88,7 @@ def _from_lines(text: str) -> list[str]:
 
 
 def parse_answers(text: str, n: int | None = None) -> list[str]:
+    """Multi-answer parse for one-shot / batch JSON paths (kept for A / batch)."""
     text = (text or "").strip()
     answers: list[str] | None = None
 
@@ -107,3 +109,32 @@ def parse_answers(text: str, n: int | None = None) -> list[str]:
     if len(answers) < n:
         return answers + [""] * (n - len(answers))
     return answers[:n]
+
+
+def parse_single_final(text: str) -> str | None:
+    """Strict single-item parse. Rejects prose; never invents from last line."""
+    text = (text or "").strip()
+    if not text:
+        return None
+
+    matches = list(_SINGLE_FINAL.finditer(text))
+    if matches:
+        value = _strip_line(matches[-1].group(1))
+        return value or None
+
+    parsed = _extract_json(text)
+    if isinstance(parsed, str):
+        s = parsed.strip()
+        return s or None
+    if isinstance(parsed, list) and len(parsed) == 1:
+        s = "" if parsed[0] is None else str(parsed[0]).strip()
+        return s or None
+    if isinstance(parsed, dict):
+        if "answer" in parsed:
+            s = "" if parsed["answer"] is None else str(parsed["answer"]).strip()
+            return s or None
+        if "answers" in parsed and isinstance(parsed["answers"], list) and len(parsed["answers"]) == 1:
+            s = "" if parsed["answers"][0] is None else str(parsed["answers"][0]).strip()
+            return s or None
+
+    return None

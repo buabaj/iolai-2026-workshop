@@ -18,6 +18,8 @@ RESCUE_TOKEN_PER_ITEM = 80
 RESCUE_TOKEN_CAP = 1024
 
 EXPLAIN_MAX_NEW_TOKENS = 128
+ANALYSIS_MAX_NEW_TOKENS = 400
+ITEM_MAX_NEW_TOKENS = 128
 
 
 def primary_max_new_tokens(n_items: int, strategy: str = "") -> int:
