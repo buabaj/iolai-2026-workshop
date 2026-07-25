@@ -1,39 +1,43 @@
-# IOL-AI 2026 — test your script on Colab
+# IOL-AI 2026 solver
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/rita-berrada/iolai-2026-workshop/blob/main/linguini_eval_T4.ipynb)
+Competitive offline solver for [IOL-AI 2026](https://iolai.org).
 
-A template to **test your IOL-AI 2026 competition script on Colab before submitting it**. It runs your model on real [Linguini](https://huggingface.co/datasets/facebook/linguini) problems (same format as the competition test set), so you can see what your script produces and check its answers.
+## Layout
 
-## How it's organised
+| Path | Purpose |
+|---|---|
+| `script.py` | Competition entrypoint |
+| `solver/` | Prompting, parse, verify, normalize, inference |
+| `evaluate.py` | Local Linguini harness (Hub access; not used in sandbox) |
+| `pack_submission.sh` | Snapshot AWQ weights + code for a public HF model repo |
+| `linguini_eval_T4.ipynb` | Workshop Colab template |
 
-- **Setup** + **Load the test problems** — Colab scaffolding, you don't touch it.
-- **Your script** — your model + prompt + parsing. The part you experiment with and upload as `script.py`.
-- **Check** — look at the raw output and score it (only possible here, where the answers are known).
+## Sandbox contract
 
-## Reuse it for your own script
+- Public HF model repo; weights + code in the same repo
+- `script.py` loads from `.`, reads `/tmp/data/test.csv`, writes `submission.csv`
+- Offline T4, 30 minutes, libraries pinned by the Space (`torch` 2.4, `transformers` 4.44.1, `autoawq`, `bitsandbytes`, …)
+- `pred` is a JSON list aligned to numbered query items
 
-Change three things, all in the **Your script** section:
+## Local checks
 
-1. `MODEL_ID` → your model repo (or any model that fits the T4's 16 GB).
-2. `SYSTEM` → your prompt (the main lever).
-3. `parse_answers` → how you read the answers back (must match the format your prompt asks for).
+```bash
+python -m pytest tests/ -q
+python evaluate.py --strategy structured_verify_v1 --n 16 --seed 0 \
+  --model_id Qwen/Qwen2.5-7B-Instruct-AWQ
+```
 
-Then run, watch the output stream live, and check the score — iterate on the prompt until you're happy.
+## Package and submit
 
-## From this notebook to a real submission
+```bash
+./pack_submission.sh Qwen/Qwen2.5-7B-Instruct-AWQ ./submit_build
+hf upload YOURUSER/iolai-2026-qwen25-7b ./submit_build --repo-type model
+```
 
-Only three more things change:
+Human track:
 
-1. `MODEL_ID` points at `.` (weights ship inside the submission repo) instead of a Hub name.
-2. You read the platform's hidden test set at `/tmp/data/test.csv` instead of Linguini.
-3. You write `submission.csv` instead of scoring.
+```bash
+IOL_EXPLAIN=1 ./pack_submission.sh Qwen/Qwen2.5-7B-Instruct-AWQ ./submit_build_explain
+```
 
-The prompt, the model, and the parsing stay exactly the same.
-
-## Run it
-
-1. Open [`linguini_eval_T4.ipynb`](linguini_eval_T4.ipynb) in Colab (badge above).
-2. **Runtime → Change runtime type → T4 GPU**.
-3. Run the cells in order. Setup restarts the runtime once (normal) — after it restarts, continue from "Load the test problems". ~15 min total; downloads ~10 GB of model weights.
-
-**Data note:** please do not re-host Linguini problems in plaintext (contamination risk) — the notebook loads them from the Hub only.
+Do not re-host Linguini problems as plaintext.
