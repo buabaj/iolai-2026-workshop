@@ -19,12 +19,20 @@ Competitive offline solver for [IOL-AI 2026](https://iolai.org).
 - Offline T4, 30 minutes, libraries pinned by the Space (`torch` 2.4, `transformers` 4.44.1, `autoawq`, `bitsandbytes`, …)
 - `pred` is a JSON list aligned to numbered query items
 
-## Local checks
+## Local / Colab checks
 
 ```bash
+pip install -U transformers accelerate datasets sacrebleu gptqmodel bitsandbytes pytest
 python -m pytest tests/ -q
 python evaluate.py --strategy structured_verify_v1 --n 16 --seed 0 \
-  --model_id Qwen/Qwen2.5-7B-Instruct-AWQ
+  --model_id "Qwen/Qwen2.5-7B-Instruct-AWQ"
+```
+
+If AWQ import fails on Colab, either `pip install -U gptqmodel` or:
+
+```bash
+python evaluate.py --strategy structured_verify_v1 --n 16 --seed 0 \
+  --model_id "Qwen/Qwen2.5-7B-Instruct" --load bnb
 ```
 
 ## Package and submit

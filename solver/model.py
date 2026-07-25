@@ -64,6 +64,7 @@ def load_model(
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     tok = AutoTokenizer.from_pretrained(model_id)
+    dtype_kwargs = _dtype_kwargs(torch)
 
     if load_mode == LOAD_MODE_BNB:
         from transformers import BitsAndBytesConfig
@@ -79,13 +80,33 @@ def load_model(
             device_map="auto",
         ).eval()
     else:
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype=torch.float16,
-            device_map="auto",
-        ).eval()
+        try:
+            model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                device_map="auto",
+                **dtype_kwargs,
+            ).eval()
+        except ImportError as exc:
+            raise ImportError(
+                "AWQ load failed. On Colab run: pip install -U gptqmodel\n"
+                "Or evaluate with bitsandbytes instead:\n"
+                '  python evaluate.py --load bnb --model_id "Qwen/Qwen2.5-7B-Instruct" ...'
+            ) from exc
 
     return ModelBundle(tok=tok, model=model, model_id=model_id)
+
+
+def _dtype_kwargs(torch_mod) -> dict:
+    try:
+        import inspect
+        from transformers import AutoModelForCausalLM
+
+        params = inspect.signature(AutoModelForCausalLM.from_pretrained).parameters
+        if "dtype" in params:
+            return {"dtype": torch_mod.float16}
+    except Exception:
+        pass
+    return {"torch_dtype": torch_mod.float16}
 
 
 def _prompt_tensors(tok: Any, model: Any, messages: list[dict[str, str]]):
