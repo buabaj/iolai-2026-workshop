@@ -16,6 +16,14 @@ class ModelBundle:
     model_id: str
 
 
+@dataclass(frozen=True)
+class GenStats:
+    prompt_tokens: int
+    new_tokens: int
+    hit_max_new: bool
+    eos_limited: bool
+
+
 def assert_gpu_resident(bundle: ModelBundle) -> None:
     import torch
 
@@ -170,6 +178,16 @@ def generate(
     *,
     max_new_tokens: int = 256,
 ) -> str:
+    text, _ = generate_with_stats(bundle, messages, max_new_tokens=max_new_tokens)
+    return text
+
+
+def generate_with_stats(
+    bundle: ModelBundle,
+    messages: list[dict[str, str]],
+    *,
+    max_new_tokens: int = 256,
+) -> tuple[str, GenStats]:
     import torch
 
     _force_greedy(bundle.model)
@@ -184,4 +202,12 @@ def generate(
         kwargs["pad_token_id"] = pad_id
     with torch.no_grad():
         output = bundle.model.generate(**inputs, **kwargs)
-    return bundle.tok.decode(output[0][prompt_len:], skip_special_tokens=True).strip()
+    new_tokens = int(output.shape[-1] - prompt_len)
+    hit_max = new_tokens >= max_new_tokens
+    text = bundle.tok.decode(output[0][prompt_len:], skip_special_tokens=True).strip()
+    return text, GenStats(
+        prompt_tokens=int(prompt_len),
+        new_tokens=new_tokens,
+        hit_max_new=hit_max,
+        eos_limited=not hit_max,
+    )

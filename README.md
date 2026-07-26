@@ -27,8 +27,9 @@ hf upload jbuaba/iolai-2026-qwen25-14b ./submit_build_14b --repo-type model
 ## Local gate (Colab T4, `transformers==4.44.1`)
 
 ```bash
-python evaluate.py --n 48 --seed 0 --stratified \
+python evaluate.py --n 16 --seed 0 --stratified \
   --model_id "Qwen/Qwen2.5-14B-Instruct-AWQ"
 ```
 
-Do not Space-submit until that gate looks healthy.
+Read the `PERF` line: `hit_cap`, `mean_new`, `proj_90_items` (Space ≈ 90 sub-questions).
+Do not gate on per-problem row projections.

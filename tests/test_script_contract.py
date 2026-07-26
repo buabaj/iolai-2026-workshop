@@ -28,9 +28,33 @@ def test_parse_lines():
     assert parse_lines("") == []
 
 
+def test_gen_stats_shape():
+    from solver.model import GenStats
+
+    s = GenStats(prompt_tokens=10, new_tokens=3, hit_max_new=False, eos_limited=True)
+    assert s.eos_limited and not s.hit_max_new
+
+
+def test_solve_row_returns_stats():
+    from solver.minimal import solve_row
+    from solver.model import ModelBundle
+
+    def fake_gen(bundle, messages, max_new_tokens):
+        return "a\nb"
+
+    pred, raw, stats = solve_row(
+        {"context": "c", "query": "q"},
+        ModelBundle(tok=None, model=None, model_id="x"),
+        generate_fn=fake_gen,
+    )
+    assert pred == ["a", "b"]
+    assert raw == "a\nb"
+    assert stats.prompt_tokens == 0
+
+
 def test_solver_surface():
     import solver
 
     assert hasattr(solver, "solve_row")
+    assert hasattr(solver, "generate_with_stats")
     assert hasattr(solver, "load_model")
-    assert hasattr(solver, "generate")

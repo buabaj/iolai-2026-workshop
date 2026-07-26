@@ -62,7 +62,7 @@ def main() -> None:
         if time.monotonic() >= deadline:
             print(f"soft deadline at {index}/{len(df)}", flush=True)
             break
-        pred, raw = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
+        pred, raw, _ = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
         explanation = None
         if WRITE_EXPLANATIONS and time.monotonic() < deadline - 60:
             explanation = _explain(bundle, row, pred, raw)

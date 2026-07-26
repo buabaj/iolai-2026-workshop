@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .model import ModelBundle, generate
+from .model import GenStats, ModelBundle, generate_with_stats
 
 SYSTEM = (
     "You solve International Linguistics Olympiad problems. "
@@ -22,15 +22,23 @@ def solve_row(
     *,
     max_new_tokens: int = MAX_NEW_TOKENS,
     generate_fn=None,
-) -> tuple[list[str], str]:
-    gen = generate_fn or (
-        lambda b, m, n: generate(b, m, max_new_tokens=n)
-    )
+) -> tuple[list[str], str, GenStats]:
     context = str(row.get("context", "") or "").strip()
     query = str(row.get("query", "") or "").strip()
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": f"{context}\n\n{query}"},
     ]
-    raw = gen(bundle, messages, max_new_tokens)
-    return parse_lines(raw), raw
+    if generate_fn is not None:
+        raw = generate_fn(bundle, messages, max_new_tokens)
+        stats = GenStats(
+            prompt_tokens=0,
+            new_tokens=0,
+            hit_max_new=False,
+            eos_limited=True,
+        )
+    else:
+        raw, stats = generate_with_stats(
+            bundle, messages, max_new_tokens=max_new_tokens
+        )
+    return parse_lines(raw), raw, stats

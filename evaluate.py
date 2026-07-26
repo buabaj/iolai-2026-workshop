@@ -12,7 +12,7 @@ from solver.minimal import MAX_NEW_TOKENS, solve_row
 from solver.model import load_model
 
 DEFAULT_MODEL = "Qwen/Qwen2.5-14B-Instruct-AWQ"
-PUBLIC_ROWS = 90
+SPACE_ITEMS_EST = 90
 
 
 def gold_alts(reference) -> list[list[str]]:
@@ -120,31 +120,47 @@ def main() -> None:
     started = time.monotonic()
     em_num = chrf_num = empty = items = 0
     wrong_n = 0
+    hit_cap = 0
+    prompt_tok_sum = new_tok_sum = 0
     per_problem = []
 
     for index, row in df.iterrows():
         t0 = time.monotonic()
-        pred, _ = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
+        pred, _, stats = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
         scored = score_problem(pred, row["answer"])
+        sec = time.monotonic() - t0
         em_num += scored["em"] * scored["n_items"]
         chrf_num += scored["chrf"] * scored["n_items"]
         empty += scored["empty"]
         items += scored["n_items"]
         wrong_n += int(scored["len_error"] > 0)
+        hit_cap += int(stats.hit_max_new)
+        prompt_tok_sum += stats.prompt_tokens
+        new_tok_sum += stats.new_tokens
+        tok_s = stats.new_tokens / sec if sec > 0 else 0.0
         per_problem.append(
             {
                 "id": str(row.get("id", index)),
                 "task_type": str(row.get("task_type", "")),
                 **scored,
                 "pred": pred,
-                "runtime_sec": time.monotonic() - t0,
+                "runtime_sec": sec,
+                "prompt_tokens": stats.prompt_tokens,
+                "new_tokens": stats.new_tokens,
+                "hit_max_new": stats.hit_max_new,
+                "eos_limited": stats.eos_limited,
+                "n_pred": len(pred),
+                "decode_tok_s": tok_s,
             }
         )
         print(
             f"[{index + 1}/{len(df)}] {row.get('task_type')} "
             f"EM={scored['em']:.2f} chrF={scored['chrf']:.1f} "
             f"empty={scored['empty']} len_err={scored['len_error']} "
-            f"{time.monotonic() - t0:.1f}s",
+            f"gold_n={scored['n_items']} n_pred={len(pred)} "
+            f"prompt={stats.prompt_tokens} new={stats.new_tokens} "
+            f"{'HIT_CAP' if stats.hit_max_new else 'eos'} "
+            f"{tok_s:.1f} tok/s {sec:.1f}s",
             flush=True,
         )
 
@@ -152,9 +168,16 @@ def main() -> None:
     em = em_num / max(1, items)
     chrf = chrf_num / max(1, items)
     score = math.sqrt(max(0.0, em) * max(0.0, chrf / 100.0))
-    proj90 = (runtime / max(1, len(df))) * PUBLIC_ROWS
+    items_per_s = items / runtime if runtime > 0 else 0.0
+    proj_space_items = (
+        (SPACE_ITEMS_EST / items_per_s) if items_per_s > 0 else float("inf")
+    )
+    mean_prompt = prompt_tok_sum / max(1, len(df))
+    mean_new = new_tok_sum / max(1, len(df))
+    hit_rate = hit_cap / max(1, len(df))
     summary = {
         "model_id": args.model_id,
+        "max_new_tokens": MAX_NEW_TOKENS,
         "n": args.n,
         "seed": args.seed,
         "stratified": args.stratified,
@@ -164,7 +187,13 @@ def main() -> None:
         "empty_rate": empty / max(1, items),
         "wrong_item_count_rate": wrong_n / max(1, len(df)),
         "runtime_sec": runtime,
-        "projected_90_sec": proj90,
+        "n_items_total": items,
+        "items_per_sec": items_per_s,
+        "projected_90_items_sec": proj_space_items,
+        "mean_prompt_tokens": mean_prompt,
+        "mean_new_tokens": mean_new,
+        "hit_max_new_rate": hit_rate,
+        "decode_tok_s_mean": new_tok_sum / runtime if runtime > 0 else 0.0,
         "per_problem": per_problem,
     }
     args.results_dir.mkdir(parents=True, exist_ok=True)
@@ -174,12 +203,19 @@ def main() -> None:
     print(
         f"FINAL EM={em:.3f} chrF={chrf:.1f} score≈{score:.3f} "
         f"empty={empty / max(1, items):.3f} wrong_n={wrong_n / max(1, len(df)):.3f} "
-        f"runtime={runtime:.0f}s proj90={proj90:.0f}s",
+        f"runtime={runtime:.0f}s",
+        flush=True,
+    )
+    print(
+        f"PERF items={items} items/s={items_per_s:.3f} "
+        f"proj_90_items={proj_space_items:.0f}s "
+        f"mean_prompt={mean_prompt:.0f} mean_new={mean_new:.0f} "
+        f"hit_cap={hit_rate:.2f} decode≈{new_tok_sum / runtime if runtime else 0:.1f} tok/s",
         flush=True,
     )
     print(f"wrote {out}", flush=True)
     print(
-        "NOTE: Linguini proxy ≠ Space score. Gate on T4 with transformers==4.44.1.",
+        "NOTE: Linguini proxy ≠ Space. Trust proj_90_items (~90 sub-questions), not row count.",
         flush=True,
     )
 
