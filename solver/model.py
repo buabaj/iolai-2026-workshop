@@ -8,38 +8,32 @@ DEFAULT_MODEL_ID = "."
 LOAD_MODE_AWQ = "awq"
 LOAD_MODE_BNB = "bnb"
 
-PRIMARY_TOKEN_BASE = 48
-PRIMARY_TOKEN_PER_ITEM = 64
-PRIMARY_TOKEN_CAP = 768
-BASELINE_TOKEN_FLOOR = 1024
-
-RESCUE_TOKEN_BASE = 120
-RESCUE_TOKEN_PER_ITEM = 80
-RESCUE_TOKEN_CAP = 1024
-
-EXPLAIN_MAX_NEW_TOKENS = 128
-ANALYSIS_MAX_NEW_TOKENS = 400
-ITEM_MAX_NEW_TOKENS = 128
-
-
-def primary_max_new_tokens(n_items: int, strategy: str = "") -> int:
-    n = max(1, n_items)
-    tokens = min(PRIMARY_TOKEN_CAP, PRIMARY_TOKEN_BASE + PRIMARY_TOKEN_PER_ITEM * n)
-    if strategy == "baseline":
-        return max(tokens, BASELINE_TOKEN_FLOOR)
-    return tokens
-
-
-def rescue_max_new_tokens(n_items: int) -> int:
-    n = max(1, n_items)
-    return min(RESCUE_TOKEN_CAP, RESCUE_TOKEN_BASE + RESCUE_TOKEN_PER_ITEM * n)
-
 
 @dataclass
 class ModelBundle:
     tok: Any
     model: Any
     model_id: str
+
+
+def assert_gpu_resident(bundle: ModelBundle) -> None:
+    import torch
+
+    if not torch.cuda.is_available():
+        print("warn: CUDA unavailable", flush=True)
+        return
+    bad = []
+    for name, param in bundle.model.named_parameters():
+        if not str(param.device).startswith("cuda"):
+            bad.append(f"{name}:{param.device}")
+            if len(bad) >= 5:
+                break
+    if bad:
+        raise RuntimeError(f"non-CUDA parameters: {bad}")
+    print(
+        f"gpu ok | VRAM {torch.cuda.memory_allocated() / 1e9:.2f} GB",
+        flush=True,
+    )
 
 
 def load_model(
@@ -56,7 +50,6 @@ def load_model(
 
     if offline is None:
         offline = model_id == DEFAULT_MODEL_ID or os.environ.get("HF_HUB_OFFLINE") == "1"
-
     if offline:
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -66,34 +59,52 @@ def load_model(
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     tok = AutoTokenizer.from_pretrained(model_id)
+    if tok.pad_token_id is None and tok.eos_token_id is not None:
+        tok.pad_token = tok.eos_token
+
     dtype_kwargs = _dtype_kwargs(torch)
+    preferred: Any = {"": 0} if torch.cuda.is_available() else "auto"
 
-    if load_mode == LOAD_MODE_BNB:
-        from transformers import BitsAndBytesConfig
+    def _load(device_map: Any):
+        if load_mode == LOAD_MODE_BNB:
+            from transformers import BitsAndBytesConfig
 
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            quantization_config=BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-            ),
-            device_map="auto",
-        ).eval()
-    else:
-        try:
-            model = AutoModelForCausalLM.from_pretrained(
+            return AutoModelForCausalLM.from_pretrained(
                 model_id,
-                device_map="auto",
+                quantization_config=BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                ),
+                device_map=device_map,
+            ).eval()
+        try:
+            return AutoModelForCausalLM.from_pretrained(
+                model_id,
+                device_map=device_map,
                 **dtype_kwargs,
             ).eval()
         except ImportError as exc:
             raise ImportError(
-                "AWQ load failed. On Colab run: pip install -U gptqmodel\n"
-                "Or evaluate with bitsandbytes instead:\n"
-                '  python evaluate.py --load bnb --model_id "Qwen/Qwen2.5-7B-Instruct" ...'
+                "AWQ load failed; install gptqmodel/autoawq or use IOL_LOAD=bnb"
             ) from exc
+
+    try:
+        model = _load(preferred)
+    except ImportError:
+        raise
+    except Exception as exc:
+        if preferred == "auto":
+            raise
+        print(f"warn: device_map retry auto ({exc})", flush=True)
+        model = _load("auto")
+
+    try:
+        model.generation_config.repetition_penalty = 1.0
+        model.generation_config.do_sample = False
+    except Exception:
+        pass
 
     return ModelBundle(tok=tok, model=model, model_id=model_id)
 
@@ -103,8 +114,7 @@ def _dtype_kwargs(torch_mod) -> dict:
         import inspect
         from transformers import AutoModelForCausalLM
 
-        params = inspect.signature(AutoModelForCausalLM.from_pretrained).parameters
-        if "dtype" in params:
+        if "dtype" in inspect.signature(AutoModelForCausalLM.from_pretrained).parameters:
             return {"dtype": torch_mod.float16}
     except Exception:
         pass
@@ -130,13 +140,21 @@ def _prompt_tensors(tok: Any, model: Any, messages: list[dict[str, str]]):
     if hasattr(encoded, "to"):
         encoded = encoded.to(model.device)
         return encoded, encoded["input_ids"].shape[-1]
-
     if isinstance(encoded, dict):
-        moved = {k: v.to(model.device) if hasattr(v, "to") else v for k, v in encoded.items()}
+        moved = {
+            k: v.to(model.device) if hasattr(v, "to") else v for k, v in encoded.items()
+        }
         return moved, moved["input_ids"].shape[-1]
-
     ids = encoded.to(model.device)
     return {"input_ids": ids}, ids.shape[-1]
+
+
+def _pad_token_id(bundle: ModelBundle) -> int | None:
+    if getattr(bundle.tok, "pad_token_id", None) is not None:
+        return int(bundle.tok.pad_token_id)
+    if getattr(bundle.tok, "eos_token_id", None) is not None:
+        return int(bundle.tok.eos_token_id)
+    return None
 
 
 def generate(
@@ -148,10 +166,14 @@ def generate(
     import torch
 
     inputs, prompt_len = _prompt_tensors(bundle.tok, bundle.model, messages)
+    kwargs: dict[str, Any] = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "repetition_penalty": 1.0,
+    }
+    pad_id = _pad_token_id(bundle)
+    if pad_id is not None:
+        kwargs["pad_token_id"] = pad_id
     with torch.no_grad():
-        output = bundle.model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-        )
+        output = bundle.model.generate(**inputs, **kwargs)
     return bundle.tok.decode(output[0][prompt_len:], skip_special_tokens=True).strip()

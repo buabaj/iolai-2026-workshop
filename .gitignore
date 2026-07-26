@@ -1,4 +1,7 @@
 submit_build/
+submit_build_14b/
+submit_build_14b_explain/
+lora_7b/
 .pytest_cache/
 __pycache__/
 *.pyc

@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# Build a public HF model repo for IOL-AI 2026.
-# Usage:
-#   ./pack_submission.sh [hub_model_id] [out_dir]
-#   IOL_EXPLAIN=1 ./pack_submission.sh [hub_model_id] [out_dir]
-#
-# Default stays on 7B until the stratified-48 timing gate passes on 14B.
+# Pack offline HF submission: weights + script.py + solver/
+# Usage: ./pack_submission.sh [hub_model_id] [out_dir]
 
 set -euo pipefail
 
-HUB_MODEL_ID="${1:-Qwen/Qwen2.5-7B-Instruct-AWQ}"
-OUT_DIR="${2:-./submit_build}"
+HUB_MODEL_ID="${1:-Qwen/Qwen2.5-14B-Instruct-AWQ}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 WRITE_EXPLANATIONS="${IOL_EXPLAIN:-0}"
+
 if [[ "${HUB_MODEL_ID}" == *"14B"* ]]; then
+  OUT_DIR="${2:-./submit_build_14b}"
   HF_REPO="${IOL_HF_REPO:-jbuaba/iolai-2026-qwen25-14b}"
 else
+  OUT_DIR="${2:-./submit_build}"
   HF_REPO="${IOL_HF_REPO:-jbuaba/iolai-2026-qwen25-7b}"
 fi
 
-mkdir -p "${OUT_DIR}"
+if [[ "${HUB_MODEL_ID}" == *"14B"* && "${OUT_DIR}" == "./submit_build" ]]; then
+  echo "refuse: 14B must pack to ./submit_build_14b, not ./submit_build" >&2
+  exit 1
+fi
 
+mkdir -p "${OUT_DIR}"
 if command -v hf >/dev/null 2>&1; then
   hf download "${HUB_MODEL_ID}" --local-dir "${OUT_DIR}"
 else
@@ -28,7 +30,7 @@ fi
 
 rm -rf "${OUT_DIR}/solver"
 mkdir -p "${OUT_DIR}/solver"
-for name in __init__ items prompts parse verify normalize model pipeline constraints; do
+for name in __init__ model minimal; do
   cp "${ROOT}/solver/${name}.py" "${OUT_DIR}/solver/${name}.py"
 done
 cp "${ROOT}/script.py" "${OUT_DIR}/script.py"
@@ -37,15 +39,27 @@ if [[ "${WRITE_EXPLANATIONS}" == "1" ]]; then
   python3 - "${OUT_DIR}/script.py" <<'PY'
 import sys
 from pathlib import Path
-path = Path(sys.argv[1])
-text = path.read_text()
+p = Path(sys.argv[1])
+t = p.read_text()
 old = 'os.environ.get("IOL_EXPLAIN", "0")'
 new = 'os.environ.get("IOL_EXPLAIN", "1")'
-if old not in text:
-    raise SystemExit("could not set IOL_EXPLAIN default")
-path.write_text(text.replace(old, new, 1))
+if old not in t:
+    raise SystemExit("IOL_EXPLAIN default not found")
+p.write_text(t.replace(old, new, 1))
 PY
 fi
+
+python3 - "${OUT_DIR}" <<'PY'
+import json, sys
+from pathlib import Path
+out = Path(sys.argv[1])
+cfg_path = out / "generation_config.json"
+if cfg_path.exists():
+    cfg = json.loads(cfg_path.read_text())
+    cfg["repetition_penalty"] = 1.0
+    cfg["do_sample"] = False
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
+PY
 
 cat > "${OUT_DIR}/README.md" <<EOF
 ---
@@ -54,17 +68,13 @@ tags:
   - iol-ai-2026
 ---
 
-# IOL-AI 2026 submission
+# IOL-AI 2026
 
 - Weights: \`${HUB_MODEL_ID}\`
-- Entrypoint: \`script.py\`
-- Loads from \`.\`, reads \`/tmp/data/test.csv\`, writes \`submission.csv\`
-- Strategy: \`analyze_constrained_v1\` (analysis → per-item → strict FINAL parse → rescue → conservative normalize)
-- Ablations: \`structured_verify_v1\` (A), \`per_item_v1\` (C), \`analyze_constrained_v1\` (D)
-- Invariant: parse may reject; normalize never guesses
-- Explanations: \`IOL_EXPLAIN=1\` (analysis summary when available)
-- Quant fallback: \`IOL_LOAD=bnb\`
+- \`script.py\` → \`/tmp/data/test.csv\` → \`submission.csv\`
+- Minimal greedy decode with \`repetition_penalty=1.0\`
 EOF
 
 echo "packed ${OUT_DIR}"
-echo "upload with: hf upload ${HF_REPO} ${OUT_DIR} --repo-type model"
+echo "python tools/verify_pack.py ${OUT_DIR}"
+echo "hf upload ${HF_REPO} ${OUT_DIR} --repo-type model"

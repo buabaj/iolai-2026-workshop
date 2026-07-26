@@ -10,20 +10,10 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import pandas as pd
 
-from solver.items import count_items
-from solver.model import DEFAULT_MODEL_ID, load_model
-from solver.pipeline import (
-    DEFAULT_STRATEGY,
-    EXPLAIN_RESERVE_BASE_SEC,
-    EXPLAIN_RESERVE_PER_ROW_SEC,
-    RESCUE_RATE_CAP,
-    SOFT_DEADLINE_SEC,
-    DeadlineClock,
-    solve_row,
-)
+from solver.minimal import MAX_NEW_TOKENS, solve_row
+from solver.model import DEFAULT_MODEL_ID, assert_gpu_resident, load_model
 
 MODEL_ID = os.environ.get("IOL_MODEL_ID", DEFAULT_MODEL_ID)
-STRATEGY = os.environ.get("IOL_STRATEGY", DEFAULT_STRATEGY)
 WRITE_EXPLANATIONS = os.environ.get("IOL_EXPLAIN", "0").strip().lower() in {
     "1",
     "true",
@@ -31,79 +21,90 @@ WRITE_EXPLANATIONS = os.environ.get("IOL_EXPLAIN", "0").strip().lower() in {
 }
 TEST_CSV_PATH = os.environ.get("IOL_TEST_CSV", "/tmp/data/test.csv")
 SUBMISSION_CSV_PATH = os.environ.get("IOL_OUT_CSV", "submission.csv")
-SOFT_DEADLINE_SECONDS = float(
-    os.environ.get("IOL_SOFT_DEADLINE_SEC", str(SOFT_DEADLINE_SEC))
-)
+HARD_LIMIT_SEC = float(os.environ.get("IOL_HARD_LIMIT_SEC", str(30 * 60)))
+SAFETY_SEC = float(os.environ.get("IOL_SAFETY_SEC", "150"))
 
 
-def _write_submission(rows: list[dict], path: str) -> None:
+def _write(rows: list[dict], path: str) -> None:
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
-def _empty_record(row, *, with_explanation: bool) -> dict:
-    n = count_items(str(row.get("query", "") or ""), str(row.get("context", "") or "")) or 1
-    record = {"id": row["id"], "pred": json.dumps([""] * n, ensure_ascii=False)}
-    if with_explanation:
-        record["explanation"] = ""
-    return record
+def _row(row, pred: list[str], explanation: str | None) -> dict:
+    if not pred:
+        pred = ["?"]
+    out = {"id": row["id"], "pred": json.dumps(pred, ensure_ascii=False)}
+    if WRITE_EXPLANATIONS:
+        out["explanation"] = explanation or ""
+    return out
 
 
 def main() -> None:
-    started = time.monotonic()
-    print(f"loading model from {MODEL_ID!r}", flush=True)
+    t0 = time.monotonic()
+    df = pd.read_csv(TEST_CSV_PATH, dtype=str).fillna("")
+    rows = [_row(r, ["?"], "") for _, r in df.iterrows()]
+    _write(rows, SUBMISSION_CSV_PATH)
+    print(f"placeholder {SUBMISSION_CSV_PATH} ({len(rows)} rows)", flush=True)
+
     bundle = load_model(MODEL_ID, offline=True)
+    assert_gpu_resident(bundle)
+    try:
+        bundle.model.generation_config.repetition_penalty = 1.0
+        bundle.model.generation_config.do_sample = False
+    except Exception:
+        pass
+
+    deadline = t0 + HARD_LIMIT_SEC - SAFETY_SEC
     print(
-        f"loaded {bundle.model_id} in {time.monotonic() - started:.1f}s "
-        f"| strategy={STRATEGY} explain={WRITE_EXPLANATIONS}",
+        f"loaded {bundle.model_id} in {time.monotonic() - t0:.1f}s "
+        f"explain={WRITE_EXPLANATIONS}",
         flush=True,
     )
 
-    df = pd.read_csv(TEST_CSV_PATH, dtype=str).fillna("")
-    clock = DeadlineClock(SOFT_DEADLINE_SECONDS)
-    rescue_budget = max(1, int(RESCUE_RATE_CAP * len(df)))
-    rescue_used = 0
-    rows: list[dict] = []
-
-    for _, row in df.iterrows():
-        if clock.expired():
-            print(f"soft deadline at {len(rows)}/{len(df)}; flushing", flush=True)
-            for _, remaining in df.iloc[len(rows) :].iterrows():
-                rows.append(_empty_record(remaining, with_explanation=WRITE_EXPLANATIONS))
+    for index, row in df.iterrows():
+        if time.monotonic() >= deadline:
+            print(f"soft deadline at {index}/{len(df)}", flush=True)
             break
-
-        remaining_rows = len(df) - len(rows)
-        explain_budget = EXPLAIN_RESERVE_BASE_SEC + EXPLAIN_RESERVE_PER_ROW_SEC * remaining_rows
-        explain_this = WRITE_EXPLANATIONS and clock.remaining() > explain_budget
-
-        result = solve_row(
-            row,
-            STRATEGY,
-            bundle,
-            clock=clock,
-            explain=explain_this,
-            allow_rescue=True,
-            rescue_used=rescue_used,
-            rescue_budget_rows=rescue_budget,
-        )
-        if result["meta"].get("rescued"):
-            rescue_used += 1
-
-        record = {
-            "id": row["id"],
-            "pred": json.dumps(result["pred"], ensure_ascii=False),
-        }
-        if WRITE_EXPLANATIONS:
-            record["explanation"] = result.get("explanation") or ""
-        rows.append(record)
-        _write_submission(rows, SUBMISSION_CSV_PATH)
+        pred, raw = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
+        explanation = None
+        if WRITE_EXPLANATIONS and time.monotonic() < deadline - 60:
+            explanation = _explain(bundle, row, pred, raw)
+        rows[index] = _row(row, pred, explanation)
+        _write(rows, SUBMISSION_CSV_PATH)
         print(
-            f"{len(rows)}/{len(df)} done | rescued={rescue_used} | "
-            f"elapsed={clock.elapsed():.0f}s remaining={clock.remaining():.0f}s",
+            f"{index + 1}/{len(df)} n={len(pred)} "
+            f"elapsed={time.monotonic() - t0:.0f}s",
             flush=True,
         )
 
-    _write_submission(rows, SUBMISSION_CSV_PATH)
-    print(f"wrote {SUBMISSION_CSV_PATH} ({len(rows)} rows)", flush=True)
+    _write(rows, SUBMISSION_CSV_PATH)
+    print(f"wrote {SUBMISSION_CSV_PATH} total={time.monotonic() - t0:.0f}s", flush=True)
+
+
+def _explain(bundle, row, pred: list[str], raw: str) -> str:
+    from solver.model import generate
+
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Write 2-4 short bullet points explaining the answer. "
+                "Human-readable, not a chain of thought."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"CONTEXT:\n{row.get('context', '')}\n\n"
+                f"QUERY:\n{row.get('query', '')}\n\n"
+                f"ANSWERS:\n{pred}\n\n"
+                f"TRACE:\n{(raw or '')[:2000]}"
+            ),
+        },
+    ]
+    try:
+        return generate(bundle, messages, max_new_tokens=128)
+    except Exception:
+        return ""
 
 
 if __name__ == "__main__":
