@@ -17,6 +17,7 @@ REQUIRED = [
     "solver/minimal.py",
     "solver/items.py",
     "solver/matching.py",
+    "solver/parse.py",
 ]
 
 

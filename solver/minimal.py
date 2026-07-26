@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .items import detect_n_items, extract_item_sources, fit_to_n
+from .items import detect_n_items, extract_item_sources
 from .matching import repair_bijection, solve_matching
 from .model import GenStats, ModelBundle, generate_with_stats
+from .parse import build_user_content, parse_answers
 
 SYSTEM = (
     "You solve International Linguistics Olympiad problems. "
@@ -28,9 +29,29 @@ def solve_row(
     context = str(row.get("context", "") or "").strip()
     query = str(row.get("query", "") or "").strip()
     task_type = str(row.get("task_type", "") or "").strip().lower()
+    n = detect_n_items(query, context)
+    fallback = extract_item_sources(query, n)
+
+    if task_type == "match_letters" and generate_fn is None:
+        try:
+            matched = solve_matching(bundle, row, n)
+            if matched and len(matched) == n:
+                stats = GenStats(
+                    prompt_tokens=0,
+                    new_tokens=0,
+                    hit_max_new=False,
+                    eos_limited=True,
+                )
+                return repair_bijection(matched), "", stats
+        except Exception:
+            pass
+
     messages = [
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": f"{context}\n\n{query}"},
+        {
+            "role": "user",
+            "content": build_user_content(context, query, n, task_type),
+        },
     ]
     if generate_fn is not None:
         raw = generate_fn(bundle, messages, max_new_tokens)
@@ -45,17 +66,7 @@ def solve_row(
             bundle, messages, max_new_tokens=max_new_tokens
         )
 
-    n = detect_n_items(query, context)
-    fallback = extract_item_sources(query, n)
-    pred = fit_to_n(parse_lines(raw), n, fallback)
-
-    if task_type == "match_letters" and generate_fn is None:
-        try:
-            matched = solve_matching(bundle, row, n)
-            if matched and len(matched) == n:
-                pred = matched
-        except Exception:
-            pass
+    pred = parse_answers(raw, n, fallback)
+    if task_type == "match_letters":
         pred = repair_bijection(pred)
-
     return pred, raw, stats

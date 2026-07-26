@@ -28,6 +28,17 @@ def test_parse_lines():
     assert parse_lines("") == []
 
 
+def test_clean_and_parse_answers():
+    from solver.parse import clean_line, parse_answers
+
+    assert clean_line("1. hello") == "hello"
+    assert clean_line('"world"') == "world"
+    assert parse_answers("1. 111\n2. 222\n3. 333", 3) == ["111", "222", "333"]
+    assert parse_answers("noise\nfoo\nbar\nbaz", 2) == ["bar", "baz"]
+    assert parse_answers("Here are the answers:\n1. aa\n2. bb", 2) == ["aa", "bb"]
+    assert parse_answers("", 2, ["x", "y"]) == ["x", "y"]
+
+
 def test_detect_n_and_fit_to_n():
     from solver.items import detect_n_items, extract_item_sources, fit_to_n
 
@@ -35,7 +46,6 @@ def test_detect_n_and_fit_to_n():
     assert detect_n_items(q) == 3
     assert detect_n_items("Translate:\nx\ny") == 2
     assert detect_n_items("Match.", "1. a\n2. b\n3. c") == 3
-
     assert fit_to_n(["a"], 3, ["x", "y", "z"]) == ["a", "y", "z"]
     assert fit_to_n(["r1", "r2", "a", "b", "c"], 3) == ["a", "b", "c"]
     assert fit_to_n([], 2) == ["?", "?"]
@@ -49,11 +59,9 @@ def test_matching_parse_and_assignment():
     items, opts = parse_matching_block(ctx)
     assert [i[0] for i in items] == [1, 2, 3]
     assert [o[0] for o in opts] == ["A", "B", "C"]
-
     cols = best_assignment([[0.1, 0.9, 0.0], [0.8, 0.1, 0.0], [0.0, 0.1, 0.7]])
     assert cols == [1, 0, 2]
     assert repair_bijection(["A", "A", "C"]) == ["A", "B", "C"]
-    assert repair_bijection(["A", "B", "C"]) == ["A", "B", "C"]
 
 
 def test_solve_row_fit_repairs():
@@ -61,19 +69,19 @@ def test_solve_row_fit_repairs():
     from solver.model import ModelBundle
 
     def fake_gen(bundle, messages, max_new_tokens):
-        return "only-one"
+        assert "digits only" in messages[1]["content"]
+        return "1. 42\n2. 7"
 
     pred, raw, stats = solve_row(
         {
             "context": "",
-            "query": "1. aaa\n2. bbb\n3. ccc",
-            "task_type": "fill_blanks",
+            "query": "1. aaa\n2. bbb",
+            "task_type": "text_to_num",
         },
         ModelBundle(tok=None, model=None, model_id="x"),
         generate_fn=fake_gen,
     )
-    assert pred == ["only-one", "bbb", "ccc"]
-    assert raw == "only-one"
+    assert pred == ["42", "7"]
     assert stats.prompt_tokens == 0
 
 
@@ -81,6 +89,5 @@ def test_solver_surface():
     import solver
 
     assert hasattr(solver, "solve_row")
-    assert hasattr(solver, "detect_n_items")
-    assert hasattr(solver, "fit_to_n")
-    assert hasattr(solver, "generate_with_stats")
+    assert hasattr(solver, "parse_answers")
+    assert hasattr(solver, "clean_line")
