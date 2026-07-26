@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from .items import detect_n_items, extract_item_sources, fit_to_n
+from .matching import repair_bijection, solve_matching
 from .model import GenStats, ModelBundle, generate_with_stats
 
 SYSTEM = (
@@ -25,6 +27,7 @@ def solve_row(
 ) -> tuple[list[str], str, GenStats]:
     context = str(row.get("context", "") or "").strip()
     query = str(row.get("query", "") or "").strip()
+    task_type = str(row.get("task_type", "") or "").strip().lower()
     messages = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": f"{context}\n\n{query}"},
@@ -41,4 +44,18 @@ def solve_row(
         raw, stats = generate_with_stats(
             bundle, messages, max_new_tokens=max_new_tokens
         )
-    return parse_lines(raw), raw, stats
+
+    n = detect_n_items(query, context)
+    fallback = extract_item_sources(query, n)
+    pred = fit_to_n(parse_lines(raw), n, fallback)
+
+    if task_type == "match_letters" and generate_fn is None:
+        try:
+            matched = solve_matching(bundle, row, n)
+            if matched and len(matched) == n:
+                pred = matched
+        except Exception:
+            pass
+        pred = repair_bijection(pred)
+
+    return pred, raw, stats

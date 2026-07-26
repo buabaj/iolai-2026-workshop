@@ -15,6 +15,8 @@ REQUIRED = [
     "solver/__init__.py",
     "solver/model.py",
     "solver/minimal.py",
+    "solver/items.py",
+    "solver/matching.py",
 ]
 
 

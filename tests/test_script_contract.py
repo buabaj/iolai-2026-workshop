@@ -28,27 +28,52 @@ def test_parse_lines():
     assert parse_lines("") == []
 
 
-def test_gen_stats_shape():
-    from solver.model import GenStats
+def test_detect_n_and_fit_to_n():
+    from solver.items import detect_n_items, extract_item_sources, fit_to_n
 
-    s = GenStats(prompt_tokens=10, new_tokens=3, hit_max_new=False, eos_limited=True)
-    assert s.eos_limited and not s.hit_max_new
+    q = "1. foo\n2. bar\n3. baz"
+    assert detect_n_items(q) == 3
+    assert detect_n_items("Translate:\nx\ny") == 2
+    assert detect_n_items("Match.", "1. a\n2. b\n3. c") == 3
+
+    assert fit_to_n(["a"], 3, ["x", "y", "z"]) == ["a", "y", "z"]
+    assert fit_to_n(["r1", "r2", "a", "b", "c"], 3) == ["a", "b", "c"]
+    assert fit_to_n([], 2) == ["?", "?"]
+    assert extract_item_sources(q, 3) == ["foo", "bar", "baz"]
 
 
-def test_solve_row_returns_stats():
+def test_matching_parse_and_assignment():
+    from solver.matching import best_assignment, parse_matching_block, repair_bijection
+
+    ctx = "1. red\n2. blue\n3. green\n\nA. azul\nB. rojo\nC. verde"
+    items, opts = parse_matching_block(ctx)
+    assert [i[0] for i in items] == [1, 2, 3]
+    assert [o[0] for o in opts] == ["A", "B", "C"]
+
+    cols = best_assignment([[0.1, 0.9, 0.0], [0.8, 0.1, 0.0], [0.0, 0.1, 0.7]])
+    assert cols == [1, 0, 2]
+    assert repair_bijection(["A", "A", "C"]) == ["A", "B", "C"]
+    assert repair_bijection(["A", "B", "C"]) == ["A", "B", "C"]
+
+
+def test_solve_row_fit_repairs():
     from solver.minimal import solve_row
     from solver.model import ModelBundle
 
     def fake_gen(bundle, messages, max_new_tokens):
-        return "a\nb"
+        return "only-one"
 
     pred, raw, stats = solve_row(
-        {"context": "c", "query": "q"},
+        {
+            "context": "",
+            "query": "1. aaa\n2. bbb\n3. ccc",
+            "task_type": "fill_blanks",
+        },
         ModelBundle(tok=None, model=None, model_id="x"),
         generate_fn=fake_gen,
     )
-    assert pred == ["a", "b"]
-    assert raw == "a\nb"
+    assert pred == ["only-one", "bbb", "ccc"]
+    assert raw == "only-one"
     assert stats.prompt_tokens == 0
 
 
@@ -56,5 +81,6 @@ def test_solver_surface():
     import solver
 
     assert hasattr(solver, "solve_row")
+    assert hasattr(solver, "detect_n_items")
+    assert hasattr(solver, "fit_to_n")
     assert hasattr(solver, "generate_with_stats")
-    assert hasattr(solver, "load_model")
