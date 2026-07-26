@@ -24,5 +24,3 @@ hf upload jbuaba/iolai-2026-qwen25-14b ./submit_build_14b/solver solver --repo-t
 python evaluate.py --n 16 --seed 0 --stratified \
   --model_id "Qwen/Qwen2.5-14B-Instruct-AWQ"
 ```
-
-Submit Hub repo `jbuaba/iolai-2026-qwen25-14b` only (not the explain pack).

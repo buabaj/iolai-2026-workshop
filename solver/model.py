@@ -109,11 +109,11 @@ def load_model(
         print(f"warn: device_map retry auto ({exc})", flush=True)
         model = _load("auto")
 
-    _force_greedy(model)
+    apply_greedy_decoding(model)
     return ModelBundle(tok=tok, model=model, model_id=model_id)
 
 
-def _force_greedy(model: Any) -> None:
+def apply_greedy_decoding(model: Any) -> None:
     try:
         cfg = model.generation_config
         cfg.do_sample = False
@@ -179,7 +179,7 @@ def generate_with_stats(
 ) -> tuple[str, GenStats]:
     import torch
 
-    _force_greedy(bundle.model)
+    apply_greedy_decoding(bundle.model)
     inputs, prompt_len = _prompt_tensors(bundle.tok, bundle.model, messages)
     kwargs: dict[str, Any] = {
         "max_new_tokens": max_new_tokens,

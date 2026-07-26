@@ -6,7 +6,6 @@ set -euo pipefail
 
 HUB_MODEL_ID="${1:-Qwen/Qwen2.5-14B-Instruct-AWQ}"
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-WRITE_EXPLANATIONS="${IOL_EXPLAIN:-0}"
 
 if [[ "${HUB_MODEL_ID}" == *"14B"* ]]; then
   OUT_DIR="${2:-./submit_build_14b}"
@@ -30,25 +29,13 @@ fi
 
 rm -rf "${OUT_DIR}/solver"
 mkdir -p "${OUT_DIR}/solver"
-for name in __init__ model minimal; do
+for name in __init__ model minimal items matching normalize; do
   cp "${ROOT}/solver/${name}.py" "${OUT_DIR}/solver/${name}.py"
 done
 cp "${ROOT}/script.py" "${OUT_DIR}/script.py"
 
-if [[ "${WRITE_EXPLANATIONS}" == "1" ]]; then
-  python3 - "${OUT_DIR}/script.py" <<'PY'
-import sys
-from pathlib import Path
-p = Path(sys.argv[1])
-t = p.read_text()
-old = 'os.environ.get("IOL_EXPLAIN", "0")'
-new = 'os.environ.get("IOL_EXPLAIN", "1")'
-if old not in t:
-    raise SystemExit("IOL_EXPLAIN default not found")
-p.write_text(t.replace(old, new, 1))
-PY
-fi
-
+# Auto+jury ship path defaults explanations on in script.py already.
+# IOL_EXPLAIN=0 can still force auto-only packs if needed.
 python3 - "${OUT_DIR}" <<'PY'
 import json, sys
 from pathlib import Path
