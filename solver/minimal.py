@@ -1,22 +1,47 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
-from .items import detect_n_items, extract_item_sources
-from .matching import repair_bijection, solve_matching
 from .model import GenStats, ModelBundle, generate_with_stats
-from .parse import build_user_content, parse_answers
 
 SYSTEM = (
     "You solve International Linguistics Olympiad problems. "
     "Answer every numbered item. Put each answer on its own line, "
     "in order, with no numbering and no extra text."
 )
-MAX_NEW_TOKENS = 256
+MAX_NEW_TOKENS = 512
+
+_STRIP_PREFIX = re.compile(r"^\s*(?:\(?\d{1,3}\)?[.):\]]\s*|[-*•]\s+)")
+_FENCE = re.compile(r"^```[a-zA-Z]*\s*$")
+_CHATTY = re.compile(
+    r"^\s*(?:here (?:are|is)\b|answers?\s*:?\s*$|explanation\b|note\b|okay\b|"
+    r"solution\b|reasoning\b|analysis\b|translations?\s*:?\s*$|the answers?\b|"
+    r"let me\b|first,|so,|therefore\b|thus\b)",
+    re.I,
+)
+
+
+def clean_line(s: str) -> str:
+    s = (s or "").strip()
+    s = _STRIP_PREFIX.sub("", s)
+    s = s.strip().strip("`").strip()
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'“”":
+        s = s[1:-1].strip()
+    return s.strip()
 
 
 def parse_lines(text: str) -> list[str]:
-    return [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    out: list[str] = []
+    for ln in (text or "").splitlines():
+        if not ln.strip() or _FENCE.match(ln):
+            continue
+        if _CHATTY.match(ln):
+            continue
+        cleaned = clean_line(ln)
+        if cleaned and not _CHATTY.match(cleaned):
+            out.append(cleaned)
+    return out
 
 
 def solve_row(
@@ -28,30 +53,9 @@ def solve_row(
 ) -> tuple[list[str], str, GenStats]:
     context = str(row.get("context", "") or "").strip()
     query = str(row.get("query", "") or "").strip()
-    task_type = str(row.get("task_type", "") or "").strip().lower()
-    n = detect_n_items(query, context)
-    fallback = extract_item_sources(query, n)
-
-    if task_type == "match_letters" and generate_fn is None:
-        try:
-            matched = solve_matching(bundle, row, n)
-            if matched and len(matched) == n:
-                stats = GenStats(
-                    prompt_tokens=0,
-                    new_tokens=0,
-                    hit_max_new=False,
-                    eos_limited=True,
-                )
-                return repair_bijection(matched), "", stats
-        except Exception:
-            pass
-
     messages = [
         {"role": "system", "content": SYSTEM},
-        {
-            "role": "user",
-            "content": build_user_content(context, query, n, task_type),
-        },
+        {"role": "user", "content": f"{context}\n\n{query}"},
     ]
     if generate_fn is not None:
         raw = generate_fn(bundle, messages, max_new_tokens)
@@ -65,8 +69,4 @@ def solve_row(
         raw, stats = generate_with_stats(
             bundle, messages, max_new_tokens=max_new_tokens
         )
-
-    pred = parse_answers(raw, n, fallback)
-    if task_type == "match_letters":
-        pred = repair_bijection(pred)
-    return pred, raw, stats
+    return parse_lines(raw), raw, stats

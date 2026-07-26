@@ -38,6 +38,14 @@ def _row(row, pred: list[str], explanation: str | None) -> dict:
     return out
 
 
+def _is_qmark(pred_json: str) -> bool:
+    try:
+        value = json.loads(pred_json)
+        return value == ["?"]
+    except Exception:
+        return False
+
+
 def main() -> None:
     t0 = time.monotonic()
     df = pd.read_csv(TEST_CSV_PATH, dtype=str).fillna("")
@@ -50,6 +58,11 @@ def main() -> None:
     from solver.model import _force_greedy
 
     _force_greedy(bundle.model)
+    try:
+        rp = float(bundle.model.generation_config.repetition_penalty)
+    except Exception:
+        rp = float("nan")
+    print(f"generation_config.repetition_penalty={rp}", flush=True)
 
     deadline = t0 + HARD_LIMIT_SEC - SAFETY_SEC
     print(
@@ -58,23 +71,46 @@ def main() -> None:
         flush=True,
     )
 
+    n_done = 0
+    hit_cap = 0
+    soft_at: int | None = None
+    solved: list[tuple[object, list[str], str]] = []
+
     for index, row in df.iterrows():
         if time.monotonic() >= deadline:
+            soft_at = int(index)
             print(f"soft deadline at {index}/{len(df)}", flush=True)
             break
-        pred, raw, _ = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
-        explanation = None
-        if WRITE_EXPLANATIONS and time.monotonic() < deadline - 60:
-            explanation = _explain(bundle, row, pred, raw)
-        rows[index] = _row(row, pred, explanation)
+        pred, raw, stats = solve_row(row, bundle, max_new_tokens=MAX_NEW_TOKENS)
+        hit_cap += int(stats.hit_max_new)
+        rows[index] = _row(row, pred, None)
+        solved.append((index, pred, raw))
+        n_done += 1
         _write(rows, SUBMISSION_CSV_PATH)
         print(
             f"{index + 1}/{len(df)} n={len(pred)} "
+            f"new={stats.new_tokens} "
+            f"{'HIT_CAP' if stats.hit_max_new else 'eos'} "
             f"elapsed={time.monotonic() - t0:.0f}s",
             flush=True,
         )
 
+    if WRITE_EXPLANATIONS:
+        for index, pred, raw in solved:
+            if time.monotonic() >= deadline - 60:
+                break
+            explanation = _explain(bundle, df.loc[index], pred, raw)
+            rows[index] = _row(df.loc[index], pred, explanation)
+            _write(rows, SUBMISSION_CSV_PATH)
+
     _write(rows, SUBMISSION_CSV_PATH)
+    n_qmark = sum(1 for r in rows if _is_qmark(r["pred"]))
+    print(
+        f"summary n_rows={len(df)} n_done={n_done} n_qmark={n_qmark} "
+        f"hit_cap={hit_cap} soft_deadline_at={soft_at} "
+        f"rp={rp} total={time.monotonic() - t0:.0f}s",
+        flush=True,
+    )
     print(f"wrote {SUBMISSION_CSV_PATH} total={time.monotonic() - t0:.0f}s", flush=True)
 
 

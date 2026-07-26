@@ -37,7 +37,8 @@ def assert_gpu_resident(bundle: ModelBundle) -> None:
             if len(bad) >= 5:
                 break
     if bad:
-        raise RuntimeError(f"non-CUDA parameters: {bad}")
+        print(f"warn: non-CUDA parameters: {bad}", flush=True)
+        return
     print(
         f"gpu ok | VRAM {torch.cuda.memory_allocated() / 1e9:.2f} GB",
         flush=True,
@@ -137,31 +138,19 @@ def _dtype_kwargs(torch_mod) -> dict:
 
 
 def _prompt_tensors(tok: Any, model: Any, messages: list[dict[str, str]]):
-    try:
-        encoded = tok.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="pt",
-            return_dict=True,
-        )
-    except TypeError:
-        ids = tok.apply_chat_template(
-            messages,
-            add_generation_prompt=True,
-            return_tensors="pt",
-        )
-        return {"input_ids": ids.to(model.device)}, ids.shape[-1]
-
-    if hasattr(encoded, "to"):
-        encoded = encoded.to(model.device)
-        return encoded, encoded["input_ids"].shape[-1]
-    if isinstance(encoded, dict):
-        moved = {
-            k: v.to(model.device) if hasattr(v, "to") else v for k, v in encoded.items()
-        }
-        return moved, moved["input_ids"].shape[-1]
-    ids = encoded.to(model.device)
-    return {"input_ids": ids}, ids.shape[-1]
+    text = tok.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True,
+    )
+    enc = tok(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        max_length=6144,
+    )
+    moved = {k: v.to(model.device) for k, v in enc.items()}
+    return moved, int(moved["input_ids"].shape[-1])
 
 
 def _pad_token_id(bundle: ModelBundle) -> int | None:
@@ -176,7 +165,7 @@ def generate(
     bundle: ModelBundle,
     messages: list[dict[str, str]],
     *,
-    max_new_tokens: int = 256,
+    max_new_tokens: int = 512,
 ) -> str:
     text, _ = generate_with_stats(bundle, messages, max_new_tokens=max_new_tokens)
     return text
@@ -186,7 +175,7 @@ def generate_with_stats(
     bundle: ModelBundle,
     messages: list[dict[str, str]],
     *,
-    max_new_tokens: int = 256,
+    max_new_tokens: int = 512,
 ) -> tuple[str, GenStats]:
     import torch
 

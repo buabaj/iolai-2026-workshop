@@ -30,7 +30,7 @@ fi
 
 rm -rf "${OUT_DIR}/solver"
 mkdir -p "${OUT_DIR}/solver"
-for name in __init__ model minimal items matching parse; do
+for name in __init__ model minimal; do
   cp "${ROOT}/solver/${name}.py" "${OUT_DIR}/solver/${name}.py"
 done
 cp "${ROOT}/script.py" "${OUT_DIR}/script.py"
