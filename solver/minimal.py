@@ -9,7 +9,7 @@ SYSTEM = (
     "Answer every numbered item. Put each answer on its own line, "
     "in order, with no numbering and no extra text."
 )
-MAX_NEW_TOKENS = 512
+MAX_NEW_TOKENS = 256
 
 
 def parse_lines(text: str) -> list[str]:

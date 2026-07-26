@@ -100,13 +100,20 @@ def load_model(
         print(f"warn: device_map retry auto ({exc})", flush=True)
         model = _load("auto")
 
+    _force_greedy(model)
+    return ModelBundle(tok=tok, model=model, model_id=model_id)
+
+
+def _force_greedy(model: Any) -> None:
     try:
-        model.generation_config.repetition_penalty = 1.0
-        model.generation_config.do_sample = False
+        cfg = model.generation_config
+        cfg.do_sample = False
+        cfg.repetition_penalty = 1.0
+        for key in ("temperature", "top_p", "top_k", "typical_p"):
+            if hasattr(cfg, key):
+                setattr(cfg, key, None)
     except Exception:
         pass
-
-    return ModelBundle(tok=tok, model=model, model_id=model_id)
 
 
 def _dtype_kwargs(torch_mod) -> dict:
@@ -161,10 +168,11 @@ def generate(
     bundle: ModelBundle,
     messages: list[dict[str, str]],
     *,
-    max_new_tokens: int = 512,
+    max_new_tokens: int = 256,
 ) -> str:
     import torch
 
+    _force_greedy(bundle.model)
     inputs, prompt_len = _prompt_tensors(bundle.tok, bundle.model, messages)
     kwargs: dict[str, Any] = {
         "max_new_tokens": max_new_tokens,

@@ -3,7 +3,7 @@
 Offline HF submission for [IOL-AI 2026](https://iolai.org).
 
 `script.py` reads `/tmp/data/test.csv`, writes `submission.csv`.
-Decode: greedy, `repetition_penalty=1.0`, line-split answers.
+Decode: greedy, `repetition_penalty=1.0`, `max_new_tokens=256`, line-split answers.
 
 ## Layout
 

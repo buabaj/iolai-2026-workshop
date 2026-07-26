@@ -58,6 +58,8 @@ if cfg_path.exists():
     cfg = json.loads(cfg_path.read_text())
     cfg["repetition_penalty"] = 1.0
     cfg["do_sample"] = False
+    for k in ("temperature", "top_p", "top_k", "typical_p"):
+        cfg.pop(k, None)
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n")
 PY
 

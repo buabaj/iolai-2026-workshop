@@ -47,11 +47,9 @@ def main() -> None:
 
     bundle = load_model(MODEL_ID, offline=True)
     assert_gpu_resident(bundle)
-    try:
-        bundle.model.generation_config.repetition_penalty = 1.0
-        bundle.model.generation_config.do_sample = False
-    except Exception:
-        pass
+    from solver.model import _force_greedy
+
+    _force_greedy(bundle.model)
 
     deadline = t0 + HARD_LIMIT_SEC - SAFETY_SEC
     print(
